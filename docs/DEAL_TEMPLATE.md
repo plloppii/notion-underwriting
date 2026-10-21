@@ -1,6 +1,6 @@
 # Underwriting Template v5
 
-Two page shapes live here: the deal page, and the lighter comp page at the bottom. Square brackets are instructions; delete them as you fill. The method lives in "Underwriting Playbook (for Instinct)" and never appears here. Nothing on a page is for Noah to fill in: his only input is "Noah's call" on the row. Omit any section that has nothing to say. Never write notes addressed to Noah or to yourself on the page.
+Two page shapes live here: the deal page, and the lighter comp page at the bottom. Square brackets are instructions; delete them as you fill. The method lives in `docs/UNDERWRITING_PLAYBOOK.md` in the same repository and never appears here. Nothing on a page is for Noah to fill in: his only input is "Noah's call" on the row. Omit any section that has nothing to say. Never write notes addressed to Noah or to yourself on the page.
 
 ---
 
@@ -30,7 +30,7 @@ Two page shapes live here: the deal page, and the lighter comp page at the botto
 | Owner · last deed | Minta Gillespie Walker Living Trust · deed 2012-11-12 · $0, non-market | [ACRIS] |
 | Violations · jobs | none open (DOB, ECB, HPD) · jobs: minor alteration, permit issued 2005 | [BIS], [HPD] |
 | Taxes · rent regulation | $ per year · regulation signal · [only when the lot has units] | [DOF] |
-| Flood | zone · [only when a zone is mapped] | [Flood Hazard Mapper] |
+| Flood | zone AE, high risk · flood insurance required · base flood elevation 10 ft · [only when a zone is mapped, effective or 2015 preliminary] | [FEMA] |
 
 [9 rows max, Finding cell 12 words max, these Field names. Building classes and DOB codes in words, never codes. Every Source is a linked label to the lot-specific page; the lot record is called ZoLa on the page. An estimate says so in the cell ("about 63 ft, survey to confirm"). Delete rows that do not apply.]
 

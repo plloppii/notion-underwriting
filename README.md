@@ -8,16 +8,20 @@ official section URLs.
 
 Start with `HANDOFF.md` for the architecture, ids and rules.
 
+Since 2026-10-21 the instructions live here, not in Notion: Instinct clones this repository (private; its GitHub access
+covers it), pulls at the start of every job and reads the two files under `docs/`. The Notion pages of the same names
+are one-paragraph pointers back to those files. Editing the playbook means editing the markdown, committing and pushing.
+
 ## Layout
 
 | Path | Role |
 | --- | --- |
 | `HANDOFF.md` | Architecture, Notion ids, data model, rules, current state. |
-| `docs/UNDERWRITING_PLAYBOOK.md` | The instruction set Instinct follows. Source of truth; publish after editing. |
+| `docs/UNDERWRITING_PLAYBOOK.md` | The instruction set Instinct follows, read from its clone of this repo at the start of every job. Source of truth. |
 | `docs/DEAL_TEMPLATE.md` | Deal page and lighter comp page shapes, with real example links. |
-| `scripts/notion_underwriting.py` | Publishes both docs to Notion in place. |
+| `scripts/notion_underwriting.py` | Keeps the two Notion pages as pointers to this repo (`--mirror` republishes the full text instead). |
 | `scripts/notion_deals.py` | Creates, migrates and backfills the Properties database. Idempotent. |
-| `scripts/screen.py` | Stages 0 to 3 for one property from NYC Open Data, two maps, Notion write. |
+| `scripts/screen.py` | Stages 0 to 3 for one property from NYC Open Data and the FEMA flood maps, two maps, Notion write. |
 | `scripts/notion_api.py` | Shared Notion helpers: paced requests, markdown to blocks, state file. |
 | `data/notion_state.json` | Database and page ids (Properties, playbook, template). |
 
@@ -32,7 +36,7 @@ export GOOGLE_MAPS_API_KEY=...            # optional: Google Places ratings and 
 ## Commands
 
 ```bash
-.venv/bin/python scripts/notion_underwriting.py                         # publish playbook + template (updates in place)
+.venv/bin/python scripts/notion_underwriting.py                         # point the two Notion pages at this repo (--mirror publishes the full text)
 .venv/bin/python scripts/notion_deals.py                                # bring the Properties database to the current schema
 .venv/bin/python scripts/screen.py "63 Irving Place" --borough BK --ask 499999 --listing <url> --strategy Build --out $TMPDIR/irving   # dry run: .md + .json + two maps
 .venv/bin/python scripts/screen.py --bbl 3019840005 --ask 499999 --strategy Build --notion                                            # also write the row, comp rows, page body
@@ -40,8 +44,8 @@ export GOOGLE_MAPS_API_KEY=...            # optional: Google Places ratings and 
 
 Notion pages and databases, all under Noah's "Real Estate" page:
 
-- Playbook: https://www.notion.so/3fa9d8ce4a7481e68885d87cd7451488
-- Template v5: https://www.notion.so/3fa9d8ce4a748145b45fe2f540b5000c
+- Playbook: https://www.notion.so/3fa9d8ce4a7481e68885d87cd7451488 (pointer to `docs/UNDERWRITING_PLAYBOOK.md`)
+- Template v5: https://www.notion.so/3fa9d8ce4a748145b45fe2f540b5000c (pointer to `docs/DEAL_TEMPLATE.md`)
 - Properties: https://www.notion.so/3fa9d8ce4a74811595f5c286b2ef5beb
 
 ## How it works
@@ -59,7 +63,8 @@ changing Role. The latest deed sits on the row as Last sale price and date with 
 links its comps through Comps used (reverse side "Used by") and names the ZR sections it cited in Rules that
 mattered (text: "23-22, 23-344"). The row holds only what is not already on the page; 27 fields as of 2026-10-17.
 
-`screen.py` pulls PLUTO, ACRIS deeds and parties, DOB and ECB violations, BIS and DOB NOW jobs and HPD violations;
+`screen.py` pulls PLUTO, ACRIS deeds and parties, DOB and ECB violations, BIS and DOB NOW jobs and HPD violations, and the
+flood zone from FEMA's effective maps and the city's copy of the 2015 preliminary maps (both ArcGIS REST, no key);
 computes max zoning floor area and lot flags; finds closed same-class sales within a radius and window; renders both
 maps on OpenStreetMap tiles (zoom 16, cached in `.cache/tiles`) with neighborhood outlines, a dashed half-mile frame,
 a red star and numbered pins in three color groups and no text in the image; uploads the images through the Notion

@@ -6,22 +6,23 @@ real-estate jargon, so everything he reads must be plain sentences, and he decid
 ## What it does
 
 Noah texts an address, an ask and a strategy word (Flip, Rent or Build) to his assistant, Instinct. Instinct follows the
-Underwriting Playbook, produces one Notion page per property from the Underwriting Template, and keeps one row per
+Underwriting Playbook, which it reads from its clone of this repository (since 2026-10-21; a Notion page before that), produces one Notion page per property from the Underwriting Template, and keeps one row per
 building in the Properties database. A local script does the data-heavy stages from NYC Open Data when Noah runs it
 himself. A separate project, `~/nyc-zr` (github.com/plloppii/nyc-zr), holds the NYC Zoning Resolution as markdown with a
 searchable index and a CLI; pages here cite its sections by official URL, and nothing in that project depends on this one.
 
 ## Where things live
 
-This repo, `~/notion-underwriting` (github.com/plloppii/notion-underwriting, private; `.venv/`, `.cache/` are local):
+This repo, `~/notion-underwriting` (github.com/plloppii/notion-underwriting, private; Instinct has read access and clones it;
+`.venv/`, `.cache/` are local):
 
 | Path | Role |
 | --- | --- |
-| `docs/UNDERWRITING_PLAYBOOK.md` | The instruction set Instinct follows. Source of truth; publish after editing. |
+| `docs/UNDERWRITING_PLAYBOOK.md` | The instruction set Instinct follows. Source of truth; Instinct pulls the repo at the start of every job. |
 | `docs/DEAL_TEMPLATE.md` | Deal page and lighter comp page shapes, with real example links. |
-| `scripts/notion_underwriting.py` | Publishes the two docs above to Notion in place (deletes blocks, re-appends). |
+| `scripts/notion_underwriting.py` | Writes the two Notion pages as pointers to this repo (default) or republishes the full docs (`--mirror`); either way deletes blocks, re-appends. |
 | `scripts/notion_deals.py` | Creates, migrates and backfills the Properties database. Idempotent; run after schema changes. |
-| `scripts/screen.py` | Stages 0 to 3 for one property: Open Data pulls, envelope, flags, ACRIS comps, two maps, Notion write. |
+| `scripts/screen.py` | Stages 0 to 3 for one property: Open Data pulls, flood zone from two map services, envelope, flags, ACRIS comps, two maps, Notion write. |
 | `scripts/notion_api.py` | Shared Notion helpers: paced `req()`, markdown to blocks, `load_state()` / `save_state()`. |
 | `data/notion_state.json` | Database and page ids below. |
 | `.cache/tiles` | OpenStreetMap tiles already fetched; safe to delete. |
@@ -34,8 +35,8 @@ Notion, all under the "Real Estate" page `60a139f3-f569-40cf-9976-8d0c40dae1c5`:
 
 | Page or database | Id | Notes |
 | --- | --- | --- |
-| Underwriting Playbook (for Instinct) | `3fa9d8ce-4a74-81e6-8885-d87cd7451488` | Published from the markdown; never hand-edit. |
-| Underwriting Template v5 | `3fa9d8ce-4a74-8145-b45f-e2f540b5000c` | Same. |
+| Underwriting Playbook (for Instinct) | `3fa9d8ce-4a74-81e6-8885-d87cd7451488` | Pointer to `docs/UNDERWRITING_PLAYBOOK.md` on GitHub since 2026-10-21; never hand-edit. |
+| Underwriting Template v5 | `3fa9d8ce-4a74-8145-b45f-e2f540b5000c` | Same, to `docs/DEAL_TEMPLATE.md`. |
 | Properties database | `3fa9d8ce-4a74-8115-95f5-c286b2ef5beb` | State keys `databases.properties` and the historical `deals`. |
 | Archive | `3fb9d8ce-4a74-8194-9562-faee98b3dbeb` | Old templates. Never read from it. |
 
@@ -50,7 +51,12 @@ citations moved to the nyc-zr CLI and official URLs.
   `scripts/notion_api.req(method, path, body, version)`; database work uses version `2022-06-28`. Never print the token.
 - Google Maps Platform key: `GOOGLE_MAPS_API_KEY` in the environment for the script; Instinct keeps it in its vault as the
   login entry "Google Places API key". Optional. Never write it on a page or in a message.
-- Open Data needs no key. Tiles come from tile.openstreetmap.org with a User-Agent header.
+- GitHub: github.com/plloppii/notion-underwriting, Noah's personal account (SSH alias `github-personal`; never the work account).
+  Instinct has read access to Noah's GitHub and clones the repo.
+- Open Data needs no key. Neither do the two flood map services: FEMA's National Flood Hazard Layer
+  (hazards.fema.gov, ArcGIS REST, layer 28, the effective maps that set insurance; the host resets some connections, so
+  the script retries) and NYC Emergency Management's copy of the 2015 preliminary maps (services1.arcgis.com, PFIRM
+  layer 0, what the Building Code uses for new construction). Tiles come from tile.openstreetmap.org with a User-Agent header.
 - Setup: `uv sync` (requests, matplotlib, shapely, pillow).
 
 ## Data model: the Properties database
@@ -65,7 +71,8 @@ names that exist in the live schema, so deleting a field in Notion does not brea
 
 ## Flow of one job
 
-1. Stage 0, identify: BBL and twelve facts from PLUTO, ACRIS, DOB, HPD; links line with hyperlinked labels (Listing,
+1. Stage 0, identify: BBL and twelve facts from PLUTO, ACRIS, DOB, HPD and the two flood map services (effective zone
+   sets insurance, 2015 preliminary zone sets the design elevation; E-designation from PLUTO); links line with hyperlinked labels (Listing,
    StreetEasy, ZoLa, BIS, ACRIS, DOF); exterior photo only from a listing of this property, else Street View, else none.
 2. Stage 1, envelope: max zoning floor area, height and coverage from the ZR (nyc-zr CLI), cited by official URL.
 3. Stage 2, classify: unused ratio, demolition freedom, possession; strategy from Noah's word, inferred only when exactly
@@ -87,14 +94,21 @@ Instinct adds the photo, listing pass, rents and exit comps. Dry run: `--out $TM
 - Noah wants a discussion and an explicit go before anything changes in Notion or the scripts.
 - Deleting a database field deletes its values everywhere; carry values over first (see `migrate()` for how Lot was done).
 - Publishing clears the page before re-appending; a failed publish leaves it empty until re-run.
+- The instructions live in this repo, not Notion. Editing the Notion pointer pages changes nothing; edit the markdown,
+  commit and push, and Instinct picks it up on its next pull.
 
 ## State as of 2026-10-21
 
+- 2026-10-21: instructions moved to GitHub. The two Notion pages are pointers; Instinct pulls the repo at the start of every
+  job. Flood zone comes from FEMA's effective maps and the city's 2015 preliminary maps by API (`flood_zone()` in
+  screen.py, playbook Stage 0 row 12); the Flood Hazard Mapper is no longer used.
 - 2026-10-21: zoning citations moved from Notion rows to the nyc-zr CLI and official zr.planning.nyc.gov URLs. The 14 deal
   rows' Rules that mattered were carried over as text and the ZR links on their pages rewritten to official URLs.
 - 2026-10-17: 50 rows: 5 deals (63 Irving Place, 1241 Putnam Avenue, 324 Weirfield Street, 706 Monroe Street, 1135 Decatur Street)
   and 45 comps. 63 Irving needs a rerun under Template v5; Putnam and Decatur still show the retired new-buildings map group.
-- Untested: screen.py's in-place page update path against live Notion; Google Places and Street View code (no key).
+- Untested: screen.py's in-place page update path against live Notion; Google Places and Street View code (no key); the
+  Flood row and flag on a live Notion page. Dry runs on 2026-10-21 verified them in the markdown and JSON for 85 Dikeman
+  Street (zone AE on both maps, base flood 10 ft effective and 12 ft preliminary) and 63 Irving Place (no zone, no row).
 - Open with Noah: whether "projects" on the map meant NYCHA public housing; floor plan beside the photo in a two-column
   layout (proposed, not built); Condition field tied to his viewing notes (parked); cost basis and returns once he has
   contractor quotes.

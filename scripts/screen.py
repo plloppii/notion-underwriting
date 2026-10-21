@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Stage 0-3 screen for one NYC property: PLUTO / ACRIS / DOB / HPD facts, zoning envelope, classification, comps,
+"""Stage 0-3 screen for one NYC property: PLUTO / ACRIS / DOB / HPD facts, FEMA flood zone, zoning envelope, classification, comps,
 two maps, and (with --notion) a deal row plus comp rows in the Properties database (one row per building).
 
   .venv/bin/python scripts/screen.py "63 Irving Place" --borough BK --ask 499999 --listing https://... --notion
@@ -19,6 +19,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 import requests
@@ -204,6 +205,63 @@ def near_corner_estimate(p: dict) -> dict | None:
     return best
 
 
+# ----------------------------------------------------------------------------- flood
+FEMA_NFHL = "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query"  # effective maps: layer 28, Flood Hazard Zones
+NYC_PFIRM = "https://services1.arcgis.com/8cuieNI8NbqQZQVJ/arcgis/rest/services/PFIRM/FeatureServer/0/query"  # FEMA's 2015 preliminary maps, NYC Emergency Management's copy
+
+
+def _arcgis_point(url: str, lat: float, lon: float, fields: str, tries: int = 4) -> list[dict] | None:
+    """Attributes of the polygons under a point in one ArcGIS REST layer; [] when none, None when the service is unreachable."""
+    params = {"geometry": f"{lon},{lat}", "geometryType": "esriGeometryPoint", "inSR": 4326, "spatialRel": "esriSpatialRelIntersects",
+              "outFields": fields, "returnGeometry": "false", "f": "json"}
+    for attempt in range(tries):
+        try:
+            r = SESSION.get(url, params=params, timeout=60)
+            if r.status_code == 200 and "features" in (j := r.json()):
+                return [f["attributes"] for f in j["features"]]
+        except (requests.RequestException, ValueError):
+            pass
+        if attempt < tries - 1:
+            time.sleep(2 * (attempt + 1))
+    return None
+
+
+def _zone(attrs: list[dict]) -> dict:
+    a = sorted(attrs, key=lambda x: x.get("SFHA_TF") != "T")[0]  # on a boundary, the stricter polygon
+    bfe = fnum(a.get("STATIC_BFE"))
+    return {"zone": (a.get("FLD_ZONE") or "").strip() or None, "subtype": (a.get("ZONE_SUBTY") or "").strip() or None,
+            "sfha": a.get("SFHA_TF") == "T", "bfe": bfe if bfe is not None and bfe > -9999 else None}
+
+
+def flood_zone(lat: float, lon: float) -> dict:
+    """Flood zone under the lot from two map services, no key: FEMA's effective National Flood Hazard Layer, which sets flood
+    insurance, and NYC Emergency Management's copy of FEMA's 2015 preliminary maps, which the Building Code uses for the design
+    flood elevation of new construction. Keys: zone, subtype, sfha, bfe (effective); pzone, psfha, pbfe (preliminary);
+    effective_ok and preliminary_ok say whether each service answered."""
+    eff = _arcgis_point(FEMA_NFHL, lat, lon, "FLD_ZONE,ZONE_SUBTY,SFHA_TF,STATIC_BFE")
+    pre = _arcgis_point(NYC_PFIRM, lat, lon, "FLD_ZONE,SFHA_TF,STATIC_BFE")
+    out = {"effective_ok": eff is not None, "preliminary_ok": pre is not None, "zone": None, "subtype": None, "sfha": False, "bfe": None,
+           "pzone": None, "psfha": False, "pbfe": None}
+    if eff:
+        out.update(_zone(eff))
+    if pre:
+        z = _zone(pre)
+        out.update(pzone=z["zone"], psfha=z["sfha"], pbfe=z["bfe"])
+    return out
+
+
+def flood_text(fl: dict) -> str:
+    """The Flood row's Finding, in words, or "" when nothing is mapped (unshaded X with no preliminary zone, or no answer)."""
+    if fl.get("sfha"):
+        return f"zone {fl['zone']}, high risk · flood insurance required" + (f" · base flood elevation {fl['bfe']:g} ft" if fl.get("bfe") else "")
+    if fl.get("psfha"):
+        now = f"zone {fl['zone']} now" if fl.get("zone") else "no zone now"
+        return f"{now}, {fl['pzone']} on 2015 preliminary maps · no insurance required yet"
+    if fl.get("zone") and "0.2 PCT" in (fl.get("subtype") or ""):
+        return f"zone {fl['zone']} shaded, moderate risk · no insurance required"
+    return ""
+
+
 # ----------------------------------------------------------------------------- envelope + classify
 def envelope(p: dict, corner: dict | None) -> dict:
     lotarea = fnum(p.get("lotarea"), 0.0)
@@ -243,7 +301,7 @@ def envelope(p: dict, corner: dict | None) -> dict:
                             "R8A": "base 60-95 ft, max 125 ft", "R8B": "base 55-65 ft, max 75 ft"}.get(zone, "see table")}
 
 
-def classify(p: dict, env: dict, dob: dict) -> dict:
+def classify(p: dict, env: dict, dob: dict, flood: dict | None = None) -> dict:
     U = env["U"]
     units = int(fnum(p.get("unitsres"), 0) or 0)
     year = int(fnum(p.get("yearbuilt"), 0) or 0)
@@ -299,6 +357,8 @@ def classify(p: dict, env: dict, dob: dict) -> dict:
         flags.append("Open HPD violations")
     if dob["active_dobnow"]:
         flags.append("Active DOB job")
+    if flood and (flood.get("sfha") or flood.get("psfha")):
+        flags.append("Flood zone")
     return {"A": a, "B": b, "C": c, "deal_type": deal, "product": product, "exits": exits, "flags": flags,
             "vacant": vacant, "units": units, "year": year}
 
@@ -901,7 +961,7 @@ def _month(d: str) -> str:
         return str(d)
 
 
-def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties, nta, ask, listing, checked, photo=None, strategy=None, deeds=None) -> dict:
+def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties, nta, ask, listing, checked, photo=None, strategy=None, deeds=None, flood=None) -> dict:
     boro = BORO_CODE[p["borough"]]
     block, lot = str(int(p["block"])), str(int(p["lot"]))
     bbl = norm_bbl(p["bbl"])
@@ -917,6 +977,7 @@ def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties
     place = nta or BORO_NAME[p["borough"]]
     zone = env["zone"]
     flags = cls["flags"]
+    flood = flood or {}
     vacant = cls["vacant"]
     historic = p.get("histdist") or p.get("landmark")
     streeteasy = "https://streeteasy.com/building/" + re.sub(r"[^a-z0-9]+", "-", p["address"].lower()).strip("-") + "-" + BORO_NAME[p["borough"]].lower().replace(" ", "-")
@@ -970,6 +1031,8 @@ def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties
         deciders.append("the legal unit count and whether the tenants are rent regulated decide the product")
     if historic:
         deciders.append("Landmarks review governs exterior work and rules out demolition")
+    if flood.get("sfha"):
+        deciders.append(f"the lot is in flood zone {flood['zone']}, so flood insurance and the elevation rules for new construction apply")
     if not deciders:
         deciders.append("no zoning gate turned up, so title and the cost quotes decide it")
     s3 = deciders[0][0].upper() + deciders[0][1:] + ("; " + "; ".join(deciders[1:]) if len(deciders) > 1 else "") + "."
@@ -984,6 +1047,7 @@ def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties
     zon += f" · special district {p['spdist1']}" if p.get("spdist1") else " · no special district"
     zon += f" · {p['histdist']}" if p.get("histdist") else " · not historic"
     zon += f" · landmark: {p['landmark']}" if p.get("landmark") else ""
+    zon += f" · E-designation {p['edesignum']}" if p.get("edesignum") else ""  # hazardous materials, air or noise conditions on new construction
     rows.append(("Zoning", zon, f"[ZoLa]({zola})"))
     if vacant:
         rows.append(("Existing building", bldg_class_text(p.get("bldgclass")).capitalize(), f"[ZoLa]({zola})"))
@@ -1005,6 +1069,9 @@ def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties
     if cls["units"] > 0:
         signal = "likely regulated: 6+ units built before 1974" if "Rent regulated?" in flags else "no public regulation signal"
         rows.append(("Taxes · rent regulation", f"taxes unknown · {signal}" + (" · HPD registration: none on record" if not dob["hpd_registered"] else ""), f"[DOF]({dof})"))
+    if (ftxt := flood_text(flood)):
+        fema = "https://msc.fema.gov/portal/search?AddressQuery=" + urllib.parse.quote(f"{addr}, {BORO_NAME[p['borough']]}, NY")
+        rows.append(("Flood", ftxt, f"[FEMA]({fema})"))
     details = "| Field | Finding | Source |\n| --- | --- | --- |\n" + "\n".join(f"| {a} | {b} | {c} |" for a, b, c in rows)
 
     # ---- zoning: lot-specific numbers and the rules that apply
@@ -1104,14 +1171,21 @@ def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties
         open_items.append(f"| Open violations: DOB {dob['dob_viol_open']}, ECB {dob['ecb_open']} (${dob['ecb_balance']:,.0f} due), HPD {dob['hpd_open']} | Cost to cure and permit holds | BIS and HPD records | Expediter |")
     if ask is None:
         open_items.append("| Asking price | Needed for the price test | Listing or broker | Noah |")
+    if flood.get("sfha") or flood.get("psfha"):
+        pre = ((f"zone {flood['pzone']}" + (f", base flood elevation {flood['pbfe']:g} ft" if flood.get("pbfe") else "")) if flood.get("psfha")
+               else ("no zone" if flood.get("preliminary_ok") else "unknown, service unreachable"))
+        open_items.append(f"| Flood zone: insurance cost and design elevation | Carrying cost; new construction must sit above the base flood elevation; the 2015 preliminary maps the Building Code uses show {pre} here | Insurance quote; elevation certificate | Noah, architect |")
+    elif not flood.get("effective_ok"):
+        open_items.append("| Flood zone | Flood insurance and elevation rules | FEMA flood map lookup; the service was unreachable on this run | Instinct |")
     open_items.append("| Hard cost and exit price per sf | Sets the returns at ask | GC quote; exit comps | Noah, Instinct |")
+    flood_note = "" if flood.get("effective_ok") and flood.get("preliminary_ok") else (" unreachable" if not flood.get("effective_ok") else ", preliminary maps unreachable")
     bottom = "\n\n".join([
         "### Open items", "| Missing fact | Moves the deal how | Evidence needed | Who |\n| --- | --- | --- | --- |\n" + "\n".join(open_items[:6]),
-        f"Run log: {checked} · stages 0-3 · screen.py (city lot record {ver}; ACRIS, DOB, HPD, DOB NOW on Open Data)",
+        f"Run log: {checked} · stages 0-3 · screen.py (city lot record {ver}; ACRIS, DOB, HPD, DOB NOW on Open Data; FEMA flood maps{flood_note})",
     ])
     return {"bbl": bbl, "zola": zola, "lot_text": lot_text, "verdict": verdict, "ask": ask, "ask_psf": ask_psf,
             "listing": listing, "photo": str(photo) if photo else None, "last_sale_text": last_sale, "nta": nta, "rules": rules,
-            "strategy": strat, "sale_price": sale_price, "sale_date": sale_date, "prior_sale": prior,
+            "strategy": strat, "sale_price": sale_price, "sale_date": sale_date, "prior_sale": prior, "flood": flood,
             "area_caption": caption, "area_pins": area_pins, "area_tail": area_tail,
             "analogs": [c["address"] for _, c in analogs],
             "body_md": {"top": top, "area": area_md, "comps": comps_md, "bottom": bottom}}
@@ -1178,7 +1252,10 @@ def main():
     corner = near_corner_estimate(p)
     env = envelope(p, corner)
     dob = dob_facts(boro, block, lot, p["bbl"])
-    cls = classify(p, env, dob)
+    lat, lon = fnum(p.get("latitude")), fnum(p.get("longitude"))
+    flood = flood_zone(lat, lon) if lat and lon else {"effective_ok": False, "preliminary_ok": False}
+    print("flood:", {k: flood.get(k) for k in ("zone", "subtype", "sfha", "bfe", "pzone", "psfha", "pbfe", "effective_ok", "preliminary_ok")})
+    cls = classify(p, env, dob, flood)
     deeds = sorted(acris_deeds(boro, [(block, lot)], None), key=lambda d: d["date"], reverse=True)
     last_sale, parties = "no deed found in ACRIS Open Data", {}
     if deeds:
@@ -1201,7 +1278,7 @@ def main():
     legends = {"area": render_area_map(p, layers, args.radius, area_png, checked)}
     legends["comps"] = render_comps_map(p, comps[:8], layers["ntas"], args.radius, comps_png, checked) if comps else []
     photo = fetch_photo(args.photo, p, out / f"{slug}-photo.jpg")
-    res = compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties, nta, args.ask, args.listing, checked, photo, args.strategy, deeds)
+    res = compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties, nta, args.ask, args.listing, checked, photo, args.strategy, deeds, flood=flood)
     res.update({"pluto": p, "envelope": env, "classification": cls, "dob": {k: v for k, v in dob.items() if k not in ("bis_jobs", "dobnow_jobs", "active_dobnow")} | {"bis_jobs": dob["bis_jobs"][:5], "dobnow_jobs": dob["dobnow_jobs"][:5]},
                 "comps": comps[:8], "corner": corner, "legends": legends, "checked": checked})
     (out / f"{slug}.json").write_text(json.dumps(res, indent=1, default=str))
