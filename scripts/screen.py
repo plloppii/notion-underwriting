@@ -1,13 +1,17 @@
 #!/usr/bin/env python
-"""Stage 0-3 screen for one NYC property: PLUTO / ACRIS / DOB / HPD facts, FEMA flood zone, zoning envelope, classification, comps,
-two maps, and (with --notion) a deal row plus comp rows in the Properties database (one row per building).
+"""Stages 0 to 3 for one NYC property: PLUTO / ACRIS / DOB / HPD facts, the flood zone from FEMA's effective and the city's 2015
+preliminary maps, zoning envelope, classification, closed comps from ACRIS, two maps, and (with --notion) the deal row, comp rows
+and page body in the Properties database (one row per building; see docs/NOTION.md).
 
-  .venv/bin/python scripts/screen.py "63 Irving Place" --borough BK --ask 499999 --listing https://... --notion
-  .venv/bin/python scripts/screen.py --bbl 3019840005 --out $TMPDIR/irving          # dry run: JSON + PNGs only
+  python3 scripts/screen.py "63 Irving Place" --borough BK --ask 499999 --strategy Build --listing https://... --notion
+  python3 scripts/screen.py --bbl 3019840005 --ask 499999 --out $TMPDIR/irving     # dry run: .md, .json and PNGs, nothing written
+  python3 scripts/screen.py --check                                                 # environment check
 
-Maps are OpenStreetMap street tiles with the city's neighborhood outlines and numbered pins, no text in the image; the
-pin list and the source caption become Notion blocks under the image. GOOGLE_MAPS_API_KEY (optional, environment only)
-enables the Street View photo and the cafe/restaurant layer with ratings. TILE_URL overrides the tile server.
+Python 3.10 or newer. Required: requests. Optional: matplotlib and pillow for the two maps (without them the run still produces
+every fact, the comps and the pin list), GOOGLE_MAPS_API_KEY in the environment for the Street View photo and the
+cafe/restaurant layer with ratings, NOTION_TOKEN for --notion. Maps are OpenStreetMap street tiles with the city's neighborhood
+outlines and numbered pins, no text in the image; the pin list and the source caption become Notion blocks under the image.
+TILE_URL overrides the tile server.
 """
 from __future__ import annotations
 
@@ -38,6 +42,14 @@ LOTTYPE = {"3": "Corner", "4": "Through", "5": "Interior"}
 MI_PER_DEG_LAT = 69.0
 FT_PER_MI = 5280.0
 SESSION = requests.Session()
+AGENT = os.environ.get("UW_AGENT", "Instinct")  # the assistant named in the open items it resolves
+os.environ.setdefault("MPLCONFIGDIR", str(ROOT / ".cache" / "matplotlib"))  # matplotlib's cache inside the checkout (gitignored)
+
+
+def have_maps() -> bool:
+    """matplotlib and pillow draw the maps; without them the run still produces the facts, comps and page text."""
+    import importlib.util
+    return all(importlib.util.find_spec(m) is not None for m in ("matplotlib", "PIL"))
 SESSION.headers["User-Agent"] = "nyc-zr-screen/0.1"
 
 
@@ -78,6 +90,34 @@ def haversine_mi(lat1, lon1, lat2, lon2) -> float:
     dl = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
+
+
+def _rings(geom: dict | None) -> list[list]:
+    """Exterior rings of a GeoJSON Polygon or MultiPolygon, each a list of [lon, lat] points."""
+    if not geom:
+        return []
+    if geom.get("type") == "Polygon":
+        return [geom["coordinates"][0]]
+    if geom.get("type") == "MultiPolygon":
+        return [poly[0] for poly in geom["coordinates"]]
+    return []
+
+
+def contains(geom: dict | None, lon: float, lat: float) -> bool:
+    """Point in polygon by ray casting over the exterior rings (holes ignored: enough to name a neighborhood)."""
+    inside = False
+    for ring in _rings(geom):
+        for a, b in zip(ring, ring[1:]):
+            x1, y1, x2, y2 = a[0], a[1], b[0], b[1]
+            if (y1 > lat) != (y2 > lat) and lon < x1 + (lat - y1) * (x2 - x1) / (y2 - y1):
+                inside = not inside
+    return inside
+
+
+def rep_point(geom: dict) -> tuple[float, float]:
+    """(lat, lon) of the vertex average of the largest ring: a point on or near the shape, good enough for a distance."""
+    ring = max(_rings(geom), key=len)
+    return sum(pt[1] for pt in ring) / len(ring), sum(pt[0] for pt in ring) / len(ring)
 
 
 def bbox(lat, lon, radius_mi):
@@ -577,11 +617,9 @@ def _figure(bm: Basemap):
 def _draw_frame(ax, bm: Basemap, ntas: list[dict]) -> None:
     """Neighborhood outlines, the dashed half-mile frame and the subject star. No text anywhere on the image."""
     import matplotlib.patches as mpatches
-    from shapely.geometry import shape
     for n in ntas:
-        g = shape(n["the_geom"])
-        for poly in (list(g.geoms) if g.geom_type == "MultiPolygon" else [g]):
-            xs, ys = zip(*[bm.px(y, x) for x, y in poly.exterior.coords])
+        for ring in _rings(n["the_geom"]):
+            xs, ys = zip(*[bm.px(pt[1], pt[0]) for pt in ring])
             ax.plot(xs, ys, color="#7b3f99", lw=1.5, alpha=0.85, zorder=3)  # plum, so the outline is not read as a street
     x0, y0 = bm.px(bm.lat0 + bm.dlat, bm.lon0 - bm.dlon)
     x1, y1 = bm.px(bm.lat0 - bm.dlat, bm.lon0 + bm.dlon)
@@ -606,7 +644,6 @@ def _pin(ax, x: float, y: float, n: int, color: str, filled: bool = True) -> Non
 def area_items(p: dict, layers: dict) -> list[tuple[str, str, float, float]]:
     """(kind, line, lat, lon) for every pin, in pin order: trains, food, parks. No schools, no new-building projects (Noah, 2026-10-17)."""
     lat0, lon0 = fnum(p["latitude"]), fnum(p["longitude"])
-    from shapely.geometry import shape
 
     def dist(la, lo):
         return haversine_mi(lat0, lon0, la, lo)
@@ -620,8 +657,8 @@ def area_items(p: dict, layers: dict) -> list[tuple[str, str, float, float]]:
     parks = sorted(layers["parks"], key=lambda k: -(fnum(k.get("acres"), 0) or 0))
     big = [pk for pk in parks if (fnum(pk.get("acres"), 0) or 0) >= 1.0][:2] or parks[:1]
     for pk in big:
-        rp = shape(pk["multipolygon"]).representative_point()
-        items.append(("park", f"{pk['signname']} · park, {fnum(pk.get('acres'), 0):.1f} acres · {dist(rp.y, rp.x):.2f} mi", rp.y, rp.x))
+        la, lo = rep_point(pk["multipolygon"])
+        items.append(("park", f"{pk['signname']} · park, {fnum(pk.get('acres'), 0):.1f} acres · {dist(la, lo):.2f} mi", la, lo))
     return items
 
 
@@ -1097,11 +1134,12 @@ def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties
     top = "\n\n".join([links, top_para, "### Details", details, "### Zoning", "\n\n".join(zlines)])
 
     # ---- area: caption line, one numbered line per pin, a negative if any (no development-pace sentence: Noah, 2026-10-17)
-    sources = [TILE_CREDIT, "NYC 2020 neighborhood boundaries", "MTA stations"]
+    drawn = layers.get("tiles") is not None  # set by render_area_map; without matplotlib there is no image, only the pin list
+    sources = ([TILE_CREDIT, "NYC 2020 neighborhood boundaries"] if drawn else []) + ["MTA stations"]
     if layers.get("food"):
         sources.append("Google Places")
     sources.append("NYC Parks")
-    caption = "Map: " + " · ".join(sources) + f" · checked {checked} · straight-line miles"
+    caption = ("Map: " if drawn else "Nearby: ") + " · ".join(sources) + f" · checked {checked} · straight-line miles"
     gaps = {"subway": "subway: source unreachable", "parks": "parks: source unreachable", "ntas": "neighborhood outlines: source unreachable",
             "food": "cafes and restaurants: source unreachable", "food: no Google key": "cafes and restaurants: no Google key"}
     notes = [gaps.get(f, f"{f}: unavailable") for f in layers.get("failed", [])]
@@ -1176,12 +1214,12 @@ def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties
                else ("no zone" if flood.get("preliminary_ok") else "unknown, service unreachable"))
         open_items.append(f"| Flood zone: insurance cost and design elevation | Carrying cost; new construction must sit above the base flood elevation; the 2015 preliminary maps the Building Code uses show {pre} here | Insurance quote; elevation certificate | Noah, architect |")
     elif not flood.get("effective_ok"):
-        open_items.append("| Flood zone | Flood insurance and elevation rules | FEMA flood map lookup; the service was unreachable on this run | Instinct |")
-    open_items.append("| Hard cost and exit price per sf | Sets the returns at ask | GC quote; exit comps | Noah, Instinct |")
+        open_items.append(f"| Flood zone | Flood insurance and elevation rules | FEMA flood map lookup; the service was unreachable on this run | {AGENT} |")
+    open_items.append(f"| Hard cost and exit price per sf | Sets the returns at ask | GC quote; exit comps | Noah, {AGENT} |")
     flood_note = "" if flood.get("effective_ok") and flood.get("preliminary_ok") else (" unreachable" if not flood.get("effective_ok") else ", preliminary maps unreachable")
     bottom = "\n\n".join([
         "### Open items", "| Missing fact | Moves the deal how | Evidence needed | Who |\n| --- | --- | --- | --- |\n" + "\n".join(open_items[:6]),
-        f"Run log: {checked} · stages 0-3 · screen.py (city lot record {ver}; ACRIS, DOB, HPD, DOB NOW on Open Data; FEMA flood maps{flood_note})",
+        f"Run log: {checked} · stages 0-3 · screen.py (city lot record {ver}; ACRIS, DOB, HPD, DOB NOW on Open Data; FEMA flood maps{flood_note}{'' if drawn else '; maps not drawn'})",
     ])
     return {"bbl": bbl, "zola": zola, "lot_text": lot_text, "verdict": verdict, "ask": ask, "ask_psf": ask_psf,
             "listing": listing, "photo": str(photo) if photo else None, "last_sale_text": last_sale, "nta": nta, "rules": rules,
@@ -1237,7 +1275,15 @@ def main():
     ap.add_argument("--photo", help="listing photo as a file path or URL; otherwise Street View when GOOGLE_MAPS_API_KEY is set")
     ap.add_argument("--strategy", choices=["Flip", "Rent", "Build"], help="Noah's strategy word; inferred only when exactly one fits")
     ap.add_argument("--notion", action="store_true")
+    ap.add_argument("--check", action="store_true", help="print the Python version, which optional packages are present and whether the Notion token is set, then exit")
     args = ap.parse_args()
+    if args.check:
+        tok = bool(os.environ.get("NOTION_TOKEN") or os.environ.get("NOTION_API_TOKEN"))
+        print(f"python {sys.version.split()[0]} · requests {requests.__version__} · maps {'yes' if have_maps() else 'no (pip install matplotlib pillow)'} · "
+              f"Notion token {'set' if tok else 'missing (export NOTION_TOKEN)'} · Google key {'set' if os.environ.get('GOOGLE_MAPS_API_KEY') else 'not set (optional)'}")
+        return
+    if not args.bbl and not args.address:
+        ap.error("give an address (with --borough) or --bbl")
     checked = dt.date.today().isoformat()
     RADIUS_NOTE = f"{args.radius:g} mi and {args.months} months"
     RADIUS_MI = args.radius
@@ -1268,15 +1314,19 @@ def main():
     comps = find_comps(p, env, cls, args.radius, args.months, args.min_amt)
     print(f"comps: {len(comps)} closed {comps[0]['product'] if comps else ''} sales within {args.radius} mi / {args.months} mo")
     layers = area_layers(p, args.radius)
-    from shapely.geometry import Point, shape
-    nta = next((n["ntaname"] for n in layers["ntas"] if shape(n["the_geom"]).contains(Point(fnum(p["longitude"]), fnum(p["latitude"])))), None)
+    nta = next((n["ntaname"] for n in layers["ntas"] if contains(n["the_geom"], lon, lat)), None)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^a-z0-9]+", "-", p["address"].lower()).strip("-")
-    area_png = out / f"{slug}-area.png"
-    comps_png = out / f"{slug}-comps.png"
-    legends = {"area": render_area_map(p, layers, args.radius, area_png, checked)}
-    legends["comps"] = render_comps_map(p, comps[:8], layers["ntas"], args.radius, comps_png, checked) if comps else []
+    area_png: Path | None = out / f"{slug}-area.png"
+    comps_png: Path | None = out / f"{slug}-comps.png"
+    if have_maps():
+        legends = {"area": render_area_map(p, layers, args.radius, area_png, checked)}
+        legends["comps"] = render_comps_map(p, comps[:8], layers["ntas"], args.radius, comps_png, checked) if comps else []
+    else:
+        print("maps skipped: matplotlib and pillow are not installed (pip install matplotlib pillow); the pin list is still written")
+        legends = {"area": [(kind, line) for kind, line, _, _ in area_items(p, layers)], "comps": []}
+        area_png = comps_png = None
     photo = fetch_photo(args.photo, p, out / f"{slug}-photo.jpg")
     res = compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties, nta, args.ask, args.listing, checked, photo, args.strategy, deeds, flood=flood)
     res.update({"pluto": p, "envelope": env, "classification": cls, "dob": {k: v for k, v in dob.items() if k not in ("bis_jobs", "dobnow_jobs", "active_dobnow")} | {"bis_jobs": dob["bis_jobs"][:5], "dobnow_jobs": dob["dobnow_jobs"][:5]},

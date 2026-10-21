@@ -22,8 +22,8 @@ PARENT = os.environ.get("NOTION_UW_PARENT", "60a139f3-f569-40cf-9976-8d0c40dae1c
 V = "2022-06-28"
 TITLE = "Properties"
 DESCRIPTION = ("One row per building, keyed by BBL. Role says whether it is a deal Noah is looking at or a comp that supported one; "
-               "a comp becomes a deal by changing Role. Filled by scripts/screen.py and by Instinct following the Underwriting "
-               "Playbook. Only Noah sets \"Noah's call\".")
+               "a comp becomes a deal by changing Role. Filled by scripts/screen.py and by the agent following docs/PLAYBOOK.md in the "
+               "notion-underwriting repository on GitHub. Only Noah sets \"Noah's call\".")
 
 STRATEGIES = ("Flip", "Rent", "Build", "Not set")
 FLAGS = ("Historic district", "Landmark", "Shallow lot", "Near corner", "Narrow lot", "Irregular lot", "Rent regulated?",

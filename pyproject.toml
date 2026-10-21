@@ -1,13 +1,12 @@
 [project]
 name = "notion-underwriting"
-version = "0.1.0"
-description = "Noah's NYC property underwriting system: Instinct's playbook and template, the Properties database scripts, and the Open Data screening script"
-requires-python = ">=3.11"
+version = "0.2.0"
+description = "Noah's NYC property underwriting system: the agent playbook and page template, the Properties database scripts, and the Open Data screening script"
+requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31",
-    "matplotlib>=3.11.2",
-    "shapely>=2.2.0",
-    "pillow>=10",
+    "matplotlib>=3.7",   # maps; optional at runtime, the script runs without it
+    "pillow>=10",        # maps; optional at runtime
 ]
 
 [tool.uv]

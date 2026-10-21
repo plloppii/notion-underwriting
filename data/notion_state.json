@@ -4,7 +4,9 @@
   "deals": "3fa9d8ce-4a74-8115-95f5-c286b2ef5beb",
   "comps_trashed": "3fa9d8ce-4a74-81c2-846c-c1e399a85f9c"
  },
- "pages": {
+ "pages_archived": {
+  "date": "2026-10-21",
+  "reason": "instructions live in the GitHub repository",
   "underwriting_playbook": "3fa9d8ce-4a74-81e6-8885-d87cd7451488",
   "deal_template": "3fa9d8ce-4a74-8145-b45f-e2f540b5000c"
  }
