@@ -3,7 +3,8 @@
 (idempotent; ids stored in data/notion_state.json under databases.deals, kept under that key for the scripts that use it).
 
 History: 2026-10-15 created Deals + Comps; 2026-10-16 merged them into one Properties database (one row per building, Role
-Deal or Comp) and trashed Comps; 2026-10-17 trimmed nine fields the page already carries (Lot became text). Env: NOTION_TOKEN or NOTION_API_TOKEN; NOTION_UW_PARENT overrides the parent page id.
+Deal or Comp) and trashed Comps; 2026-10-17 trimmed nine fields the page already carries (Lot became text); 2026-10-21 Rules that mattered became text
+(the Notion mirror of the Zoning Resolution was retired; zoning text comes from the nyc-zr CLI). Env: NOTION_TOKEN or NOTION_API_TOKEN; NOTION_UW_PARENT overrides the parent page id.
 """
 from __future__ import annotations
 
@@ -66,6 +67,7 @@ SCHEMA = {
     "Prior sale": {"rich_text": {}},
     "Beds/baths": {"rich_text": {}},
     "Listing URL": {"url": {}},
+    "Rules that mattered": {"rich_text": {}},  # section numbers cited on the page, "23-22, 23-344" (text since 2026-10-21)
 }
 PSF_FORMULA = ('if(prop("Last sale price") > 0 and prop("Existing sf") > 0, prop("Last sale price") / prop("Existing sf"), '
                'if(prop("Last sale price") > 0 and prop("Max ZFA") > 0, prop("Last sale price") / prop("Max ZFA"), toNumber("")))')
@@ -80,6 +82,12 @@ def lot_text(width, depth) -> str:
 
 def _rt(s: str) -> dict:
     return {"rich_text": [{"type": "text", "text": {"content": s[:2000]}}] if s else []}
+
+
+def _section_key(sid: str) -> tuple:
+    """Sort key for Zoning Resolution ids: 23-10 < 23-22 < 23-342 < 23-344."""
+    head, _, tail = sid.partition("-")
+    return (int(head) if head.isdigit() else 999, tail.ljust(4, "0"))
 
 
 def ensure(state: dict, schema: dict) -> str:
@@ -171,16 +179,29 @@ def migrate(state: dict, db_id: str) -> None:
         if pr["type"] == "relation" and pr["relation"].get("database_id", "").replace("-", "") == db_id.replace("-", "") \
                 and pr["relation"].get("dual_property", {}).get("synced_property_name") == "Comps used" and name != "Used by":
             _patch(db_id, {name: {"name": "Used by"}}, "renamed reverse relation to 'Used by'")
-    # ZR Sections relation, reciprocal named "Deals"
-    sections = state["databases"].get("sections")
-    if sections and "Rules that mattered" not in props:
-        _patch(db_id, {"Rules that mattered": {"relation": {"database_id": sections, "type": "dual_property", "dual_property": {}}}}, "relation")
-    if sections:
-        sdb = req("GET", f"/databases/{sections}", version=V)
-        for name, pr in sdb["properties"].items():
-            if pr["type"] == "relation" and pr["relation"].get("database_id", "").replace("-", "") == db_id.replace("-", "") and name != "Deals":
-                req("PATCH", f"/databases/{sections}", {"properties": {name: {"name": "Deals"}}}, version=V)
-                print(f"sections: relation {name!r} renamed to 'Deals'")
+    # Rules that mattered was a relation to the Notion mirror of the ZR Sections until 2026-10-21; that mirror is retired
+    # (zoning text comes from the nyc-zr CLI). Carry the cited section numbers over as text, then recreate the field as text.
+    if props.get("Rules that mattered", {}).get("type") == "relation":
+        cited: dict[str, str] = {}
+        section_ids: dict[str, str] = {}
+        for r in _rows(db_id, {"filter": {"property": "Rules that mattered", "relation": {"is_not_empty": True}}}):
+            ids = []
+            for rel in r["properties"]["Rules that mattered"]["relation"]:
+                if rel["id"] not in section_ids:  # the related row stays readable while its database sits in Trash
+                    try:
+                        section_ids[rel["id"]] = _text(req("GET", f"/pages/{rel['id']}", version=V)["properties"].get("Section ID"))
+                    except RuntimeError as e:
+                        print(f"properties: could not read ZR row {rel['id']} ({str(e)[:80]})")
+                        section_ids[rel["id"]] = ""
+                if section_ids[rel["id"]]:
+                    ids.append(section_ids[rel["id"]])
+            cited[r["id"]] = ", ".join(dict.fromkeys(sorted(ids, key=_section_key)))
+        _patch(db_id, {"Rules that mattered": None}, "dropped the relation to the retired ZR Sections mirror")
+        _patch(db_id, {"Rules that mattered": {"rich_text": {}}}, "added")
+        for pid, t in cited.items():
+            if t:
+                req("PATCH", f"/pages/{pid}", {"properties": {"Rules that mattered": _rt(t)}}, version=V)
+        print(f"properties: Rules that mattered carried over as text on {sum(1 for t in cited.values() if t)} rows")
     # dropped fields (after the data they held has been carried over by backfill/merge, which run before this on a second pass)
     _patch(db_id, {k: None for k in DROP if k in props}, "dropped")
 
@@ -331,8 +352,6 @@ def backfill(db_id: str) -> None:
 def main():
     state = load_state()
     schema = dict(SCHEMA)
-    if state.get("databases", {}).get("sections"):
-        schema["Rules that mattered"] = {"relation": {"database_id": state["databases"]["sections"], "type": "dual_property", "dual_property": {}}}
     db = ensure(state, schema)
     state["databases"]["properties"] = db
     save_state(state)

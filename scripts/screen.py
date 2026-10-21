@@ -664,34 +664,41 @@ def job_text(j: dict, bis: bool) -> str:
     return " ".join(x for x in (kind, status, year) if x)
 
 
-_ZR_PAGES: dict[str, str | None] = {}
+ROMAN = ("", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii", "xiii", "xiv")
+NYC_ZR = Path(os.environ.get("NYC_ZR", Path.home() / "nyc-zr"))  # github.com/noah-pantastic/nyc-zr
+_ZR_URLS: dict[str, str] = {}
 
 
-def zr_page_id(section: str) -> str | None:
-    """Page id of the Zoning Resolution section's row in the Notion Sections database (the nyc-zr mirror), looked up by its
-    Section ID property and cached for the run. None when the token or database id is missing or the row is not found."""
+def zr_url(section: str) -> str:
+    """Official zr.planning.nyc.gov URL of a Zoning Resolution section ("23-344(a)" -> the 23-344 page). Read from the
+    nyc-zr index (~/nyc-zr or $NYC_ZR) when it is present, otherwise derived from the id (23-344 = Article II, Chapter 3),
+    which yields the same URL."""
     base = section.split("(")[0].strip()
-    if base in _ZR_PAGES:
-        return _ZR_PAGES[base]
-    pid = None
-    try:
-        from notion_api import load_state, req
-        db = load_state().get("databases", {}).get("sections")
-        if db:
-            q = req("POST", f"/databases/{db}/query", {"filter": {"property": "Section ID", "rich_text": {"equals": base}}, "page_size": 1}, version="2022-06-28")
-            pid = q["results"][0]["id"] if q["results"] else None
-    except Exception as e:  # noqa: BLE001
-        print(f"zr row lookup failed for {base}: {str(e)[:120]}")
-    _ZR_PAGES[base] = pid
-    return pid
+    if base in _ZR_URLS:
+        return _ZR_URLS[base]
+    url = None
+    db = NYC_ZR / "data" / "zr.sqlite"
+    if db.exists():
+        try:
+            import sqlite3
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            row = con.execute("SELECT url FROM sections WHERE id = ?", (base,)).fetchone()
+            con.close()
+            url = row[0] if row else None
+        except sqlite3.Error as e:
+            print(f"zr index lookup failed for {base}: {str(e)[:120]}")
+    if not url:
+        head = base.split("-")[0]
+        article, chapter = (int(head[:-1]), int(head[-1])) if len(head) >= 2 and head.isdigit() else (0, 0)
+        url = (f"https://zr.planning.nyc.gov/article-{ROMAN[article]}/chapter-{chapter}/{base}" if 0 < article < len(ROMAN)
+               else f"https://zr.planning.nyc.gov/search?q={base}")
+    _ZR_URLS[base] = url
+    return url
 
 
 def zr_link(section: str) -> str:
-    """Markdown link to the Notion row for a ZR section; the official URL only if the row is unknown."""
-    base = section.split("(")[0]
-    pg = zr_page_id(section)
-    url = f"https://www.notion.so/{pg.replace('-', '')}" if pg else f"https://zr.planning.nyc.gov/article-ii/chapter-3/{base}"
-    return f"[ZR {section}]({url})"
+    """Markdown link to the official page of a ZR section, labeled like 'ZR 23-344(a)'."""
+    return f"[ZR {section}]({zr_url(section)})"
 
 
 def _plain(b: dict) -> str:
@@ -806,7 +813,7 @@ def notion_write(res: dict, area_png: Path | None, comps_png: Path | None, photo
     # ---- deal row
     row = find(bbl)
     zoning = [z for z in (p.get("zonedist1"), p.get("zonedist2"), p.get("overlay1"), p.get("spdist1")) if z]
-    rule_ids = [i for i in (zr_page_id(s) for s in res.get("rules", [])) if i]
+    rules_cited = ", ".join(dict.fromkeys(s.split("(")[0].strip() for s in res.get("rules", [])))  # "23-22, 23-344"
     props = {
         "Name": {"title": [{"type": "text", "text": {"content": p["address"].title()}}]},
         "BBL": text(bbl),
@@ -830,7 +837,7 @@ def notion_write(res: dict, area_png: Path | None, comps_png: Path | None, photo
         "Prior sale": text(res.get("prior_sale") or ""),
         "Listing URL": {"url": res.get("listing") or None},
         "Comps used": {"relation": [{"id": i} for i in comp_ids if i != (row or {}).get("id")]},
-        "Rules that mattered": {"relation": [{"id": i} for i in rule_ids]},
+        "Rules that mattered": text(rules_cited),
     }
     if row and res["strategy"] == "Not set" and (row["properties"].get("Strategy", {}).get("select") or {}).get("name") not in (None, "Not set"):
         props.pop("Strategy")  # never downgrade a strategy Noah or Instinct already set

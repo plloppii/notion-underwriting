@@ -2,8 +2,7 @@
  "databases": {
   "properties": "3fa9d8ce-4a74-8115-95f5-c286b2ef5beb",
   "deals": "3fa9d8ce-4a74-8115-95f5-c286b2ef5beb",
-  "comps_trashed": "3fa9d8ce-4a74-81c2-846c-c1e399a85f9c",
-  "sections": "3f99d8ce-4a74-8153-9aab-c2d09cb6ca5b"
+  "comps_trashed": "3fa9d8ce-4a74-81c2-846c-c1e399a85f9c"
  },
  "pages": {
   "underwriting_playbook": "3fa9d8ce-4a74-81e6-8885-d87cd7451488",

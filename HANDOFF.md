@@ -1,6 +1,6 @@
 # Handoff: Noah's NYC underwriting system
 
-Last updated 2026-10-17. Audience: an agent taking over maintenance or operation. Noah Pan is the owner; he is new to
+Last updated 2026-10-21. Audience: an agent taking over maintenance or operation. Noah Pan is the owner; he is new to
 real-estate jargon, so everything he reads must be plain sentences, and he decides pursue or pass himself.
 
 ## What it does
@@ -8,12 +8,12 @@ real-estate jargon, so everything he reads must be plain sentences, and he decid
 Noah texts an address, an ask and a strategy word (Flip, Rent or Build) to his assistant, Instinct. Instinct follows the
 Underwriting Playbook, produces one Notion page per property from the Underwriting Template, and keeps one row per
 building in the Properties database. A local script does the data-heavy stages from NYC Open Data when Noah runs it
-himself. A separate project, `~/nyc-zr`, mirrors the NYC Zoning Resolution into Notion and makes it searchable locally;
-pages here cite its section rows but nothing in that project depends on this one.
+himself. A separate project, `~/nyc-zr` (github.com/noah-pantastic/nyc-zr), holds the NYC Zoning Resolution as markdown with a
+searchable index and a CLI; pages here cite its sections by official URL, and nothing in that project depends on this one.
 
 ## Where things live
 
-This repo, `~/notion-underwriting` (no git yet; `.venv/`, `.cache/` are local):
+This repo, `~/notion-underwriting` (github.com/noah-pantastic/notion-underwriting, private; `.venv/`, `.cache/` are local):
 
 | Path | Role |
 | --- | --- |
@@ -26,9 +26,9 @@ This repo, `~/notion-underwriting` (no git yet; `.venv/`, `.cache/` are local):
 | `data/notion_state.json` | Database and page ids below. |
 | `.cache/tiles` | OpenStreetMap tiles already fetched; safe to delete. |
 
-Zoning, in `~/nyc-zr`: `scripts/zr.py search|get|define|district|history` over the full Zoning Resolution text
-(SQLite full-text index), `docs/AGENT_GUIDE.md` for querying its Notion databases, and the sync that mirrors sections
-into Notion. Use it for any zoning question instead of fetching zr.planning.nyc.gov.
+Zoning, in `~/nyc-zr`: `python3 scripts/zr.py search|get|define|district|history` over the full Zoning Resolution text
+(SQLite full-text index, built on first use from the JSONL in the repo; plain Python 3.11+, nothing to install). Use it for
+any zoning question instead of fetching zr.planning.nyc.gov. Its Notion mirror was retired on 2026-10-21.
 
 Notion, all under the "Real Estate" page `60a139f3-f569-40cf-9976-8d0c40dae1c5`:
 
@@ -37,10 +37,12 @@ Notion, all under the "Real Estate" page `60a139f3-f569-40cf-9976-8d0c40dae1c5`:
 | Underwriting Playbook (for Instinct) | `3fa9d8ce-4a74-81e6-8885-d87cd7451488` | Published from the markdown; never hand-edit. |
 | Underwriting Template v5 | `3fa9d8ce-4a74-8145-b45f-e2f540b5000c` | Same. |
 | Properties database | `3fa9d8ce-4a74-8115-95f5-c286b2ef5beb` | State keys `databases.properties` and the historical `deals`. |
-| ZR Sections database | `3f99d8ce-4a74-8153-9aab-c2d09cb6ca5b` | Owned by nyc-zr, under "NYC Zoning & Building Code". Reverse relation "Deals". |
 | Archive | `3fb9d8ce-4a74-8194-9562-faee98b3dbeb` | Old templates. Never read from it. |
 
-Trashed: the old Comps database `3fa9d8ce-4a74-81c2-846c-c1e399a85f9c` (merged into Properties on 2026-10-16).
+Trashed: the old Comps database `3fa9d8ce-4a74-81c2-846c-c1e399a85f9c` (merged into Properties on 2026-10-16); the ZR
+Sections and Definitions databases and "README for agents" (`3f99d8ce-4a74-8153-9aab-c2d09cb6ca5b`,
+`3f99d8ce-4a74-8124-8759-d991c0770239`, `3fa9d8ce-4a74-8119-be68-f1820e9b355d`), retired 2026-10-21 when zoning
+citations moved to the nyc-zr CLI and official URLs.
 
 ## Access
 
@@ -58,14 +60,14 @@ Flip, Rent, Build or Not set and gates exit comps and rents. Fields: Name, BBL, 
 Zoning, Lot (text "17.5 × 100"), Lot sf, Existing sf, Max ZFA, Flags, Units, Building (text in words), Verdict
 (Investigate / Pass / Closed by others), Noah's call (Noah only), Ask, Owner, Last sale price, Last sale date, Prior sale
 (text), Sale $/sf (formula), Beds/baths, Listing URL, Comps used (self-relation; reverse "Used by"), Rules that mattered
-(relation to ZR Sections). Anything else about a property lives on its page, not on the row. Scripts write only field
+(text: the section numbers cited on the page, "23-22, 23-344"). Anything else about a property lives on its page, not on the row. Scripts write only field
 names that exist in the live schema, so deleting a field in Notion does not break them.
 
 ## Flow of one job
 
 1. Stage 0, identify: BBL and twelve facts from PLUTO, ACRIS, DOB, HPD; links line with hyperlinked labels (Listing,
    StreetEasy, ZoLa, BIS, ACRIS, DOF); exterior photo only from a listing of this property, else Street View, else none.
-2. Stage 1, envelope: max zoning floor area, height and coverage from the ZR, cited to section rows.
+2. Stage 1, envelope: max zoning floor area, height and coverage from the ZR (nyc-zr CLI), cited by official URL.
 3. Stage 2, classify: unused ratio, demolition freedom, possession; strategy from Noah's word, inferred only when exactly
    one fits, otherwise Not set and the job stops after purchase comps.
 4. Stage 3: area map (three pin groups: trains blue, five restaurants and cafes red, one or two large parks green; half a
@@ -86,9 +88,11 @@ Instinct adds the photo, listing pass, rents and exit comps. Dry run: `--out $TM
 - Deleting a database field deletes its values everywhere; carry values over first (see `migrate()` for how Lot was done).
 - Publishing clears the page before re-appending; a failed publish leaves it empty until re-run.
 
-## State as of 2026-10-17
+## State as of 2026-10-21
 
-- 50 rows: 5 deals (63 Irving Place, 1241 Putnam Avenue, 324 Weirfield Street, 706 Monroe Street, 1135 Decatur Street)
+- 2026-10-21: zoning citations moved from Notion rows to the nyc-zr CLI and official zr.planning.nyc.gov URLs. The 14 deal
+  rows' Rules that mattered were carried over as text and the ZR links on their pages rewritten to official URLs.
+- 2026-10-17: 50 rows: 5 deals (63 Irving Place, 1241 Putnam Avenue, 324 Weirfield Street, 706 Monroe Street, 1135 Decatur Street)
   and 45 comps. 63 Irving needs a rerun under Template v5; Putnam and Decatur still show the retired new-buildings map group.
 - Untested: screen.py's in-place page update path against live Notion; Google Places and Street View code (no key).
 - Open with Noah: whether "projects" on the map meant NYCHA public housing; floor plan beside the photo in a two-column

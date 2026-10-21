@@ -26,7 +26,7 @@ Two page shapes live here: the deal page, and the lighter comp page at the botto
 | Lot | 3-01984-0005 · BIN 3393676 · 12.75 × 53 ft, 676 sf, interior | [ZoLa] |
 | Zoning | R6B · no overlay · no special district · not historic | [ZoLa] |
 | Existing building | Vacant land · or: three-family walk-up · 3 units · built 1910 · 2 floors · 2,320 sf gross | [ZoLa] |
-| Buildable | 676 × 2.0 = 1,352 sf · 0 built · 1,352 unused | [ZR 23-22 row] |
+| Buildable | 676 × 2.0 = 1,352 sf · 0 built · 1,352 unused | [ZR 23-22](https://zr.planning.nyc.gov/article-ii/chapter-3/23-22) |
 | Owner · last deed | Minta Gillespie Walker Living Trust · deed 2012-11-12 · $0, non-market | [ACRIS] |
 | Violations · jobs | none open (DOB, ECB, HPD) · jobs: minor alteration, permit issued 2005 | [BIS], [HPD] |
 | Taxes · rent regulation | $ per year · regulation signal · [only when the lot has units] | [DOF] |
@@ -36,15 +36,15 @@ Two page shapes live here: the deal page, and the lighter comp page at the botto
 
 ### Zoning
 
-[Only numbers specific to this lot, and only the rules that apply to it. Rules that apply to every lot in the district (height, coverage, standard yards, density) do not go here. Each rule is one entry of up to three lines: a plain sentence, the number for this lot, what proves it, and the link to the Notion row in the ZR Sections database. 3 rules max; the quoted text goes in Research notes.]
+[Only numbers specific to this lot, and only the rules that apply to it. Rules that apply to every lot in the district (height, coverage, standard yards, density) do not go here. Each rule is one entry of up to three lines: a plain sentence, the number for this lot, what proves it, and the link to the section's official page on zr.planning.nyc.gov, labeled with its number. 3 rules max; the quoted text goes in Research notes.]
 
-Buildable: 676 sf × FAR 2.0 = 1,352 sf ([ZR 23-22 row])
+Buildable: 676 sf × FAR 2.0 = 1,352 sf ([ZR 23-22](https://zr.planning.nyc.gov/article-ii/chapter-3/23-22))
 
-Rear yard, corner exemption: no rear yard is required within 100 ft of a street corner; the whole lot sits about 63 to 93 ft from the Putnam corner, estimated from lot centroids. A survey proves it. ([ZR 23-344 row])
+Rear yard, corner exemption: no rear yard is required within 100 ft of a street corner; the whole lot sits about 63 to 93 ft from the Putnam corner, estimated from lot centroids. A survey proves it. ([ZR 23-344](https://zr.planning.nyc.gov/article-ii/chapter-3/23-344))
 
-Rear yard, shallow lot: a lot under 95 ft deep loses 6 in of rear yard per foot short, floor 10 ft; 30 − 0.5 × (95 − 53) = 10 ft. Proof of the lot's depth on December 15, 1961 is required. ([ZR 23-342 row])
+Rear yard, shallow lot: a lot under 95 ft deep loses 6 in of rear yard per foot short, floor 10 ft; 30 − 0.5 × (95 − 53) = 10 ft. Proof of the lot's depth on December 15, 1961 is required. ([ZR 23-342](https://zr.planning.nyc.gov/article-ii/chapter-3/23-342))
 
-Lot size: 12.75 ft wide and 676 sf, under the 18 ft and 1,700 sf minimums, but exempt as a zoning lot that existed on December 5, 2024 and has not shrunk since. ([ZR 23-10 row])
+Lot size: 12.75 ft wide and 676 sf, under the 18 ft and 1,700 sf minimums, but exempt as a zoning lot that existed on December 5, 2024 and has not shrunk since. ([ZR 23-10](https://zr.planning.nyc.gov/article-ii/chapter-3/23-10))
 
 ### Area
 
