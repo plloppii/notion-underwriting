@@ -3,7 +3,7 @@
 Noah's NYC property underwriting system: the playbook his assistant (Instinct) follows, the page template it fills,
 the Notion **Properties** database that holds every deal and comp, and a screening script that does the Open Data
 stages on his laptop. Zoning text lives in a separate project, `~/nyc-zr`
-(github.com/noah-pantastic/nyc-zr): the NYC Zoning Resolution as searchable markdown with a CLI; pages here link to the
+(github.com/plloppii/nyc-zr): the NYC Zoning Resolution as searchable markdown with a CLI; pages here link to the
 official section URLs.
 
 Start with `HANDOFF.md` for the architecture, ids and rules.

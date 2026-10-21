@@ -8,12 +8,12 @@ real-estate jargon, so everything he reads must be plain sentences, and he decid
 Noah texts an address, an ask and a strategy word (Flip, Rent or Build) to his assistant, Instinct. Instinct follows the
 Underwriting Playbook, produces one Notion page per property from the Underwriting Template, and keeps one row per
 building in the Properties database. A local script does the data-heavy stages from NYC Open Data when Noah runs it
-himself. A separate project, `~/nyc-zr` (github.com/noah-pantastic/nyc-zr), holds the NYC Zoning Resolution as markdown with a
+himself. A separate project, `~/nyc-zr` (github.com/plloppii/nyc-zr), holds the NYC Zoning Resolution as markdown with a
 searchable index and a CLI; pages here cite its sections by official URL, and nothing in that project depends on this one.
 
 ## Where things live
 
-This repo, `~/notion-underwriting` (github.com/noah-pantastic/notion-underwriting, private; `.venv/`, `.cache/` are local):
+This repo, `~/notion-underwriting` (github.com/plloppii/notion-underwriting, private; `.venv/`, `.cache/` are local):
 
 | Path | Role |
 | --- | --- |

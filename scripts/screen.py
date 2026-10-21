@@ -665,7 +665,7 @@ def job_text(j: dict, bis: bool) -> str:
 
 
 ROMAN = ("", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii", "xiii", "xiv")
-NYC_ZR = Path(os.environ.get("NYC_ZR", Path.home() / "nyc-zr"))  # github.com/noah-pantastic/nyc-zr
+NYC_ZR = Path(os.environ.get("NYC_ZR", Path.home() / "nyc-zr"))  # github.com/plloppii/nyc-zr
 _ZR_URLS: dict[str, str] = {}
 
 
