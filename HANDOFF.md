@@ -25,7 +25,7 @@ This repo, `~/notion-underwriting` (github.com/plloppii/notion-underwriting, pri
 | `docs/NOTION.md` | The Properties database (27 fields, payloads) and the page-writing rules. The only Notion-specific document. |
 | `docs/agents/INSTINCT.md` | What is specific to Instinct: ephemeral workspace, Python 3.10, vault key, saved routine rents-for-address. A new agent gets its own file here. |
 | `scripts/bootstrap.sh` | Clone or pull both repos under `$UW_HOME` (default `$HOME`), pip install, `screen.py --check`, zr tool check. Idempotent. |
-| `scripts/screen.py` | Stages 0 to 3: Open Data pulls, flood zone from two map services, envelope, flags, ACRIS comps, two maps, Notion write. Python 3.10+. |
+| `scripts/screen.py` | Stages 0 to 3: Open Data pulls, flood zone from two map services, envelope, flags, ACRIS comps with a renovation signal from DOB jobs, two maps, Notion write. Progress lines with elapsed seconds. Python 3.10+. |
 | `scripts/notion_deals.py` | Creates, migrates and backfills the Properties database. Idempotent; run after schema changes. |
 | `scripts/notion_api.py` | Shared Notion helpers: paced `req()`, markdown to blocks, `load_state()` / `save_state()`. |
 | `data/notion_state.json` | Database ids; the two archived instruction pages under `pages_archived`. |
@@ -76,8 +76,10 @@ field in Notion does not break them.
 1. Bootstrap: clone if missing, `sh scripts/bootstrap.sh` (pull both repos, install, check).
 2. `python3 scripts/screen.py "<address>" --borough BK --ask <n> --strategy <word> --listing <url> --notion`: Stage 0 facts
    (PLUTO, ACRIS, DOB, ECB, HPD, the two flood maps, E-designation), Stage 1 envelope and flags with ZR citations, Stage 2
-   classifiers and strategy inference, Stage 3 area map with pin list and ACRIS-only purchase comps with comp rows, a draft
-   top paragraph, open items and run log; the row and page body are written above "Noah's notes".
+   classifiers and strategy inference, Stage 3 area map with pin list and ACRIS-only purchase comps with comp rows (the
+   table's Listing column pre-filled with "renovation signal: …" where DOB alteration jobs were filed in the three years
+   before the deed and at least six months ahead of it), a draft top paragraph, open items and run log; the row and page body
+   are written above "Noah's notes". About one to three minutes end to end; the ACRIS comp search runs six queries at once.
 3. By hand: photo and floor plan from the listing, the listing's facts, the DOF tax bill row, HPD registration when units are in
    question, the listing pass on each comp (Listing column, Beds/baths and Listing URL on comp rows), the Rents table, exit
    comps by strategy, then sentences 1 and 3 of the top paragraph, the final open items, Rules that mattered, a Run log line.
@@ -98,6 +100,14 @@ re-run only when facts or comps need refreshing.
 
 ## State as of 2026-10-21
 
+- 2026-10-21 (evening): first live job by Instinct from a fresh sandbox: 236 Schaefer Street, Bushwick (BBL 3034300020),
+  Investigate, Strategy Not set, 18 minutes end to end of which the script took about 8. Its feedback led to this commit: comp
+  ACRIS links were broken because the lot-dimension string overwrote the lot number in each comp (now `lot_dims`); the ACRIS
+  legals queries run six at a time (comps stage 128 s to about 40 s here); every progress line carries the seconds since
+  start and stdout is line-buffered; a renovation signal from DOB alteration jobs pre-fills the comps table's Listing column
+  (it caught two of the three gut renovations Instinct found by hand on Schaefer; the third had no permits); the docs now say
+  to find the live listing by address when Noah sends none, and `agents/INSTINCT.md` says to run the screen under `nohup`
+  with a log because its tool stops waiting after 120 seconds.
 - 2026-10-21 (later): the script is the default path for the agent; docs split into AGENTS.md plus PLAYBOOK, TEMPLATE, SOURCES,
   NOTION and agents/INSTINCT; the two Notion instruction pages archived and `scripts/notion_underwriting.py` (which kept them)
   removed; Python 3.10 supported and verified by dry runs with the full dependency set and with `requests` alone; shapely
@@ -108,9 +118,11 @@ re-run only when facts or comps need refreshing.
   rows' Rules that mattered were carried over as text and the ZR links on their pages rewritten to official URLs.
 - 2026-10-17: 50 rows: 5 deals (63 Irving Place, 1241 Putnam Avenue, 324 Weirfield Street, 706 Monroe Street, 1135 Decatur Street)
   and 45 comps. 63 Irving needs a rerun under Template v5; Putnam and Decatur still show the retired new-buildings map group.
-- Untested: `bootstrap.sh` on a real fresh agent sandbox (verified here only against local clones); screen.py's in-place page
-  update path against live Notion; Google Places and Street View code (no key); the Flood row and flag on a live Notion page
-  (dry runs verified them for 85 Dikeman Street, zone AE on both maps, 10 ft effective and 12 ft preliminary).
+- Verified live on 2026-10-21 by Instinct's Schaefer run: `bootstrap.sh` on a fresh sandbox with Python 3.10, the Google
+  Places layer with the vault key, and a new page written with `--notion`. Still untested: screen.py's in-place page update
+  path against live Notion; Street View (Schaefer had a listing photo); the Flood row and flag on a live Notion page (dry runs
+  verified them for 85 Dikeman Street, zone AE on both maps, 10 ft effective and 12 ft preliminary; Schaefer is zone X); the
+  renovation signal on a live page.
 - Open with Noah: whether "projects" on the map meant NYCHA public housing; floor plan beside the photo in a two-column layout
   (proposed, not built); Condition field tied to his viewing notes (parked); cost basis and returns once he has contractor
   quotes; adding the DOF assessment dataset (`yjxr-fw8i`) and HPD registrations (`tesw-yqqr`) to the script.

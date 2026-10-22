@@ -19,7 +19,7 @@ live in this repository and nowhere else; the Notion pages that used to hold the
 | `docs/NOTION.md` | The output adapter: the Properties database, its fields and payloads, page-writing rules. |
 | `docs/agents/INSTINCT.md` | Notes specific to Noah's assistant Instinct: ephemeral workspace, keys, saved routine. |
 | `scripts/bootstrap.sh` | Clone or pull this repo and nyc-zr, install the packages, print a check. Idempotent. |
-| `scripts/screen.py` | Stages 0 to 3 for one property: Open Data, flood maps, envelope, flags, ACRIS comps, two maps, Notion write. |
+| `scripts/screen.py` | Stages 0 to 3 for one property: Open Data, flood maps, envelope, flags, ACRIS comps with a renovation signal, two maps, Notion write. |
 | `scripts/notion_deals.py` | Creates, migrates and backfills the Properties database. Run after schema changes only. |
 | `scripts/notion_api.py` | Shared Notion helpers: paced requests, markdown to blocks, state file. |
 | `data/notion_state.json` | Database ids, and the ids of the archived instruction pages. |
@@ -65,7 +65,8 @@ page; 27 fields as of 2026-10-17.
 
 `screen.py` pulls PLUTO, ACRIS deeds and parties, DOB and ECB violations, BIS and DOB NOW jobs and HPD violations, and the
 flood zone from FEMA's effective maps and the city's copy of the 2015 preliminary maps (both ArcGIS REST, no key); computes
-max zoning floor area and lot flags; finds closed same-class sales within a radius and window; renders both maps on
+max zoning floor area and lot flags; finds closed same-class sales within a radius and window (six ACRIS queries at a time)
+and marks the ones with DOB alteration jobs filed before the sale as a renovation signal for the listing pass; renders both maps on
 OpenStreetMap tiles (cached in `.cache/tiles`) with neighborhood outlines, a dashed half-mile frame, a red star and numbered
 pins in three color groups and no text in the image; uploads the images through the Notion file-upload API; and writes the
 deal row, comp rows and page body above "Noah's notes". It never writes Pursue.

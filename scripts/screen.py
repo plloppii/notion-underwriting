@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """Stages 0 to 3 for one NYC property: PLUTO / ACRIS / DOB / HPD facts, the flood zone from FEMA's effective and the city's 2015
-preliminary maps, zoning envelope, classification, closed comps from ACRIS, two maps, and (with --notion) the deal row, comp rows
-and page body in the Properties database (one row per building; see docs/NOTION.md).
+preliminary maps, zoning envelope, classification, closed comps from ACRIS with a renovation signal from DOB alteration jobs,
+two maps, and (with --notion) the deal row, comp rows and page body in the Properties database (one row per building; see
+docs/NOTION.md). Progress lines carry the seconds since start and are flushed as they happen, so a log file shows where a run is.
 
   python3 scripts/screen.py "63 Irving Place" --borough BK --ask 499999 --strategy Build --listing https://... --notion
   python3 scripts/screen.py --bbl 3019840005 --ask 499999 --out $TMPDIR/irving     # dry run: .md, .json and PNGs, nothing written
@@ -24,6 +25,7 @@ import re
 import sys
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import requests
@@ -44,6 +46,21 @@ FT_PER_MI = 5280.0
 SESSION = requests.Session()
 AGENT = os.environ.get("UW_AGENT", "Instinct")  # the assistant named in the open items it resolves
 os.environ.setdefault("MPLCONFIGDIR", str(ROOT / ".cache" / "matplotlib"))  # matplotlib's cache inside the checkout (gitignored)
+POOL = 6  # Open Data requests in flight at once; a half-mile comp search went from two minutes to about 40 seconds at six
+T0 = time.time()
+
+
+def say(msg: str) -> None:
+    """One progress line with the seconds since start, flushed at once so a log file shows where a long run is."""
+    print(f"[{time.time() - T0:4.0f}s] {msg}", flush=True)
+
+
+def _parallel(fn, items: list) -> list:
+    """fn over items, POOL at a time, results in input order."""
+    if len(items) <= 1:
+        return [fn(x) for x in items]
+    with ThreadPoolExecutor(POOL) as ex:
+        return list(ex.map(fn, items))
 
 
 def have_maps() -> bool:
@@ -150,23 +167,26 @@ def acris_deeds(boro: str, pairs: list[tuple[str, str]], since_iso: str | None, 
     by_block: dict[str, list[str]] = {}
     for b, l in pairs:
         by_block.setdefault(str(int(b)), []).append(str(int(l)))
-    legals: list[dict] = []
-    for block, lots in by_block.items():
-        for k in range(0, len(lots), 60):
-            chunk = ",".join(f"'{x}'" for x in lots[k:k + 60])
-            legals += soda(DS["legals"], {"$where": f"borough='{boro}' AND block='{block}' AND lot in ({chunk})",
-                                           "$select": "document_id,block,lot"})
-    ids = sorted({x["document_id"] for x in legals})
-    deeds: dict[str, dict] = {}
-    for k in range(0, len(ids), 150):
-        chunk = ",".join(f"'{x}'" for x in ids[k:k + 150])
+    # one legals query per block (60 lots at a time), then the master records for those documents, POOL queries at once
+    queries = [(block, lots[k:k + 60]) for block, lots in by_block.items() for k in range(0, len(lots), 60)]
+
+    def legals_for(q: tuple[str, list[str]]) -> list[dict]:
+        block, lots = q
+        chunk = ",".join(f"'{x}'" for x in lots)
+        return soda(DS["legals"], {"$where": f"borough='{boro}' AND block='{block}' AND lot in ({chunk})", "$select": "document_id,block,lot"})
+
+    def deeds_for(chunk_ids: list[str]) -> list[dict]:
+        chunk = ",".join(f"'{x}'" for x in chunk_ids)
         where = f"document_id in ({chunk}) AND doc_type='DEED'"
         if since_iso:
             where += f" AND document_date >= '{since_iso}T00:00:00.000'"
         if min_amt:
             where += f" AND document_amt >= {min_amt}"
-        for m in soda(DS["master"], {"$where": where, "$select": "document_id,document_date,document_amt,recorded_datetime"}):
-            deeds[m["document_id"]] = m
+        return soda(DS["master"], {"$where": where, "$select": "document_id,document_date,document_amt,recorded_datetime"})
+
+    legals = [x for rows in _parallel(legals_for, queries) for x in rows]
+    ids = sorted({x["document_id"] for x in legals})
+    deeds = {m["document_id"]: m for rows in _parallel(deeds_for, [ids[k:k + 150] for k in range(0, len(ids), 150)]) for m in rows}
     # count how many lots each document covers (multi-lot sales)
     lots_per_doc: dict[str, set] = {}
     for x in legals:
@@ -438,6 +458,7 @@ def find_comps(p: dict, env: dict, cls: dict, radius_mi: float, months: int, min
             continue
         cands[(str(int(r["block"])), str(int(r["lot"])))] = r
     since = (dt.date.today() - dt.timedelta(days=30 * months)).isoformat()
+    say(f"comps: {len(cands)} candidate lots on {len({b for b, _ in cands})} blocks; reading their ACRIS deeds since {since}")
     deeds = acris_deeds(BORO_CODE[p["borough"]], list(cands), since, min_amt)
     out = []
     for d in deeds:
@@ -451,7 +472,7 @@ def find_comps(p: dict, env: dict, cls: dict, radius_mi: float, months: int, min
         dist = haversine_mi(lat, lon, fnum(r["latitude"]), fnum(r["longitude"]))
         out.append({"address": (r.get("address") or "").title(), "bbl": norm_bbl(r["bbl"]), "block": d["block"], "lot": d["lot"],
                     "date": d["date"], "price": d["amt"], "area": area, "basis": basis, "lot_sf": lotarea,
-                    "lot": f"{fnum(r.get('lotfront'), 0):g} × {fnum(r.get('lotdepth'), 0):g}" if fnum(r.get("lotfront"), 0) and fnum(r.get("lotdepth"), 0) else "",
+                    "lot_dims": f"{fnum(r.get('lotfront'), 0):g} × {fnum(r.get('lotdepth'), 0):g}" if fnum(r.get("lotfront"), 0) and fnum(r.get("lotdepth"), 0) else "",
                     "bldg_sf": bldg, "units": int(fnum(r.get("unitsres"), 0) or 0), "zone": r.get("zonedist1", ""),
                     "bldgclass": r.get("bldgclass", ""), "dist": dist, "lat": fnum(r["latitude"]), "lon": fnum(r["longitude"]),
                     "doc": d["document_id"], "multi_lot": d["lots_in_doc"] > 1, "product": product,
@@ -468,7 +489,7 @@ def find_comps(p: dict, env: dict, cls: dict, radius_mi: float, months: int, min
             g["address"] = " + ".join(dict.fromkeys(i["address"] for i in items)) + f" ({len(items)} lots)"
             g["area"] = sum(i["area"] for i in items)
             g["lot_sf"] = sum(i["lot_sf"] for i in items)
-            g["lot"] = ""
+            g["lot_dims"] = ""
             g["bldg_sf"] = sum(i["bldg_sf"] for i in items)
             g["units"] = sum(i["units"] for i in items)
             g["dist"] = min(i["dist"] for i in items)
@@ -485,6 +506,49 @@ def find_comps(p: dict, env: dict, cls: dict, radius_mi: float, months: int, min
     comps = [c for c in best.values() if not subj_area or (c["area"] and 0.1 * subj_area <= c["area"] <= 10 * subj_area)]
     comps.sort(key=lambda c: c["dist"])
     return comps
+
+
+def _job_date(s: str | None) -> dt.date | None:
+    """BIS dates are MM/DD/YYYY, DOB NOW dates ISO; either one to a date."""
+    if not s:
+        return None
+    try:
+        return dt.datetime.strptime(s[:10], "%m/%d/%Y").date() if "/" in s[:10] else dt.date.fromisoformat(s[:10])
+    except ValueError:
+        return None
+
+
+RENO_STATUS = {"loc issued": "letter of completion issued", "signed off": "signed off", "approved": "approved", "plan exam - approved": "approved",
+               "permit entire": "permitted", "permit issued": "permitted", "permit issued - entire job/work": "permitted", "permit issued - partial job": "permitted"}
+
+
+def renovation_signal(comps: list[dict], months_before: int = 36, lead_days: int = 180) -> None:
+    """DOB alteration jobs (BIS A1 and A2, DOB NOW Alteration) filed in the three years before a comp's deed and at least six
+    months ahead of it, so they are the seller's work rather than the buyer's: a sign the sale was renovated, for the listing
+    pass to confirm. Work done without permits leaves no signal. Sets c["reno"] to the Listing-column text, or ""."""
+    def one(c: dict) -> str:
+        sold = _job_date(c.get("date"))
+        if not sold:
+            return ""
+        lo, hi = sold - dt.timedelta(days=30 * months_before), sold - dt.timedelta(days=lead_days)
+        jobs: list[tuple[dt.date, str, str]] = []
+        for j in soda(DS["bisjobs"], {"$where": f"bbl='{c['bbl']}' AND job_type in ('A1','A2')", "$select": "job_type,job_status_descrp,pre__filing_date"}):
+            d = _job_date(j.get("pre__filing_date"))
+            if d and lo <= d <= hi:
+                jobs.append((d, j["job_type"], (j.get("job_status_descrp") or "").lower()))
+        for j in soda(DS["dobnow"], {"$where": f"bbl='{c['bbl']}' AND job_type like 'Alteration%'", "$select": "job_type,filing_status,filing_date"}):
+            d = _job_date(j.get("filing_date"))
+            if d and lo <= d <= hi:
+                jobs.append((d, "Alteration", (j.get("filing_status") or "").lower()))
+        jobs = sorted(j for j in jobs if "withdrawn" not in j[2] and "expired" not in j[2])
+        if not jobs:
+            return ""
+        d, kind, status = jobs[-1]
+        what = f"{len(jobs)} alteration jobs, latest" if len(jobs) > 1 else f"{kind} job"
+        return f"renovation signal: {what} filed {_month(d.isoformat())}, {RENO_STATUS.get(status, status)}"
+
+    for c, note in zip(comps, _parallel(one, comps)):
+        c["reno"] = note
 
 
 # ----------------------------------------------------------------------------- maps
@@ -871,6 +935,7 @@ def notion_write(res: dict, area_png: Path | None, comps_png: Path | None, photo
     by_bbl: dict[str, list[dict]] = {}
     for c in res["comps"][:8]:
         by_bbl.setdefault(c["bbl"], []).append(c)
+    say(f"notion: {len(by_bbl)} comp rows")
     comp_ids = []
     for cb, sales in by_bbl.items():
         sales.sort(key=lambda c: str(c["date"]), reverse=True)
@@ -887,7 +952,7 @@ def notion_write(res: dict, area_png: Path | None, comps_png: Path | None, photo
             "Borough": {"select": {"name": BORO_NAME[p["borough"]]}},
             "Neighborhood": {"select": {"name": res.get("nta") or "Unknown"}},
             "Zoning": {"multi_select": [{"name": last["zone"]}] if last.get("zone") else []},
-            "Lot": text(last.get("lot") or ""),
+            "Lot": text(last.get("lot_dims") or ""),
             "Lot sf": {"number": last["lot_sf"]},
             "Existing sf": {"number": None if buildable else (round(last["area"]) if last["area"] else None)},
             "Max ZFA": {"number": round(last["area"]) if buildable and last["area"] else None},
@@ -908,6 +973,7 @@ def notion_write(res: dict, area_png: Path | None, comps_png: Path | None, photo
             comp_ids.append(req("POST", "/pages", {"parent": {"database_id": db}, "properties": props}, version=V)["id"])
 
     # ---- deal row
+    say("notion: deal row, images and page body")
     row = find(bbl)
     zoning = [z for z in (p.get("zonedist1"), p.get("zonedist2"), p.get("overlay1"), p.get("spdist1")) if z]
     rules_cited = ", ".join(dict.fromkeys(s.split("(")[0].strip() for s in res.get("rules", [])))  # "23-22, 23-344"
@@ -1028,8 +1094,9 @@ def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties
     basis_word = "buildable sf" if buildable_basis else "sf"
     ask_psf = ask / basis_area if ask and basis_area else None
     shown = comps[:8]
+    flagged = [(n, c) for n, c in enumerate(shown, 1) if c.get("reno")]  # renovation signal: not an as-is analog until the listing pass says so
     analogs = [(n, c) for n, c in enumerate(shown, 1)
-               if c.get("psf") and not c.get("partial_doc") and (c.get("zone") or "") == zone and c.get("area") and basis_area
+               if c.get("psf") and not c.get("partial_doc") and not c.get("reno") and (c.get("zone") or "") == zone and c.get("area") and basis_area
                and basis_area / 3 <= c["area"] <= basis_area * 3]
     psfs = [c["psf"] for c in shown if c.get("psf") and not c.get("partial_doc")]
     yard = max(10.0, 30 - 0.5 * (95 - depth)) if depth else 30.0
@@ -1171,20 +1238,22 @@ def compose(p, env, cls, dob, corner, comps, layers, legends, last_sale, parties
 
     # ---- comps table and the analog sentence
     if shown:
-        trows = ["| # | Address | Closed | Price | Zoning | Area · basis | $/sf |", "| --- | --- | --- | --- | --- | --- | --- |"]
+        trows = ["| # | Address | Closed | Price | Zoning | Area · basis | $/sf | Listing |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
         for n, c in enumerate(shown, 1):
             basis = "buildable" if c["basis"] == "Buildable zoning" else "building"
             psf = f"${c['psf']:,.0f}" if c.get("psf") else "n/a"
             src = f"[ACRIS](https://a836-acris.nyc.gov/bblsearch/bblsearch.asp?borough={boro}&block={c['block']}&lot={c['lot']})"
             price = f"${c['price']:,.0f}" + (" (multi-lot)" if c.get("partial_doc") else "")
-            trows.append(f"| {n} | {c['address']} {src} · {c['dist']:.2f} mi | {c['date']} | {price} | {c.get('zone') or '?'} | {c['area']:,.0f} sf · {basis} | {psf} |")
+            trows.append(f"| {n} | {c['address']} {src} · {c['dist']:.2f} mi | {c['date']} | {price} | {c.get('zone') or '?'} | {c['area']:,.0f} sf · {basis} | {psf} | {c.get('reno') or ''} |")
         if analogs:
             sent = "Best analogs: " + ", ".join(f"#{n} {c['address']} at ${c['psf']:,.0f} per {basis_word}" for n, c in analogs)
             sent += f"; the ask is ${ask_psf:,.0f}." if ask_psf else "."
             if len(analogs) < len(shown):
-                sent += " The other rows are different districts or outside one-third to three times the subject's size."
+                sent += " The other rows are different districts" + (", carry a renovation signal" if flagged else "") + " or fall outside one-third to three times the subject's size."
         else:
             sent = "No row matches the subject's district and size; the nearest same-class sales are shown for scale" + (f", against an ask of ${ask_psf:,.0f} per {basis_word}." if ask_psf else ".")
+        if flagged:
+            sent += " Renovation signal on " + " and ".join(f"#{n} {c['address']}" for n, c in flagged) + ": alteration jobs filed in the three years before the sale; confirm in the listing pass and move a renovated sale to exit comps."
         by_lot: dict[str, list[tuple[int, dict]]] = {}
         for n, c in enumerate(shown, 1):
             by_lot.setdefault(c["bbl"], []).append((n, c))
@@ -1287,20 +1356,23 @@ def main():
     checked = dt.date.today().isoformat()
     RADIUS_NOTE = f"{args.radius:g} mi and {args.months} months"
     RADIUS_MI = args.radius
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)  # progress reaches a log file as it happens, not when the run ends
 
     p = pluto_by_bbl(args.bbl) if args.bbl else pluto_by_address(args.address, args.borough)
     if not p:
         sys.exit("no PLUTO record found")
     p["bbl"] = norm_bbl(p["bbl"])
-    print(f"PLUTO {p.get('version')}: {p['address']} BBL {p['bbl']} {p.get('zonedist1')} lot {p.get('lotfront')}x{p.get('lotdepth')} class {p.get('bldgclass')}")
+    say(f"PLUTO {p.get('version')}: {p['address']} BBL {p['bbl']} {p.get('zonedist1')} lot {p.get('lotfront')}x{p.get('lotdepth')} class {p.get('bldgclass')}")
     boro, block, lot = BORO_CODE[p["borough"]], str(int(p["block"])), str(int(p["lot"]))
 
+    say("facts: ACRIS, DOB, ECB, HPD, DOB NOW and the two flood maps")
     corner = near_corner_estimate(p)
     env = envelope(p, corner)
     dob = dob_facts(boro, block, lot, p["bbl"])
     lat, lon = fnum(p.get("latitude")), fnum(p.get("longitude"))
     flood = flood_zone(lat, lon) if lat and lon else {"effective_ok": False, "preliminary_ok": False}
-    print("flood:", {k: flood.get(k) for k in ("zone", "subtype", "sfha", "bfe", "pzone", "psfha", "pbfe", "effective_ok", "preliminary_ok")})
+    say(f"flood: {dict((k, flood.get(k)) for k in ('zone', 'subtype', 'sfha', 'bfe', 'pzone', 'psfha', 'pbfe', 'effective_ok', 'preliminary_ok'))}")
     cls = classify(p, env, dob, flood)
     deeds = sorted(acris_deeds(boro, [(block, lot)], None), key=lambda d: d["date"], reverse=True)
     last_sale, parties = "no deed found in ACRIS Open Data", {}
@@ -1309,10 +1381,12 @@ def main():
         parties = acris_parties(d["document_id"])
         amt = f"${d['amt']:,.0f}" if d["amt"] else "$0 (non-market)"
         last_sale = f"deed {d['date']} {amt}" + (f" to {parties['buyer'][0].title()}" if parties.get("buyer") else "")
-    print("envelope:", {k: env[k] for k in ("max_zfa", "unused", "U", "flags", "lot_type")}, "corner:", corner)
-    print("classify:", cls["deal_type"], cls["product"])
+    say(f"envelope: {dict((k, env[k]) for k in ('max_zfa', 'unused', 'U', 'flags', 'lot_type'))} corner: {corner}")
+    say(f"classify: {cls['deal_type']} {cls['product']}")
     comps = find_comps(p, env, cls, args.radius, args.months, args.min_amt)
-    print(f"comps: {len(comps)} closed {comps[0]['product'] if comps else ''} sales within {args.radius} mi / {args.months} mo")
+    say(f"comps: {len(comps)} closed {comps[0]['product'] if comps else ''} sales within {args.radius} mi / {args.months} mo; checking DOB alteration jobs on the {min(len(comps), 8)} shown")
+    renovation_signal(comps[:8])
+    say("maps: neighborhood outlines, stations, parks, tiles, two maps")
     layers = area_layers(p, args.radius)
     nta = next((n["ntaname"] for n in layers["ntas"] if contains(n["the_geom"], lon, lat)), None)
     out = Path(args.out)
@@ -1333,7 +1407,7 @@ def main():
                 "comps": comps[:8], "corner": corner, "legends": legends, "checked": checked})
     (out / f"{slug}.json").write_text(json.dumps(res, indent=1, default=str))
     (out / f"{slug}.md").write_text("\n\n".join([res["body_md"]["top"], "### Area", res["body_md"]["area"], "### Purchase comps", res["body_md"]["comps"], res["body_md"]["bottom"], f"### {NOTES_HEADING}"]))
-    print("wrote", out / f"{slug}.md", area_png, comps_png if comps else "(no comps map)", photo or "(no photo)")
+    say(f"wrote {out / f'{slug}.md'} {area_png} {comps_png if comps else '(no comps map)'} {photo or '(no photo)'}")
     if args.notion:
         res["dob"] = dob
         notion_write(res, area_png, comps_png if comps else None, photo)

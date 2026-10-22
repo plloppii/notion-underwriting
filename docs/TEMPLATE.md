@@ -74,7 +74,7 @@ Map: OpenStreetMap tiles © OpenStreetMap contributors · NYC 2020 neighborhood 
 
 | # | Address | Closed | Price | Zoning | Area · basis | $/sf | Listing |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | [address, linked to its ACRIS page] · 0.21 mi | date | $ | R6B | sf · buildable / building / marketed | $ | $1.25M list · 41 days · [link], or "not listed" |
+| 1 | [address, linked to its ACRIS page] · 0.21 mi | date | $ | R6B | sf · buildable / building / marketed | $ | $1.25M list · 41 days · [link], or "not listed"; the script pre-fills "renovation signal: …" from DOB jobs until the listing pass replaces it |
 
 Best analogs: #7 148 Madison Street at $223 per buildable sf; the ask is $370. The other rows are different districts or two to seven times the size.
 
